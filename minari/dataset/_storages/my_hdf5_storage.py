@@ -11,8 +11,19 @@ import numpy as np
 from PIL import Image
 
 from minari.data_collector import EpisodeBuffer
+from minari.data_collector.my_episode_buffer import MyEpisodeBuffer
+
 from minari.dataset.minari_storage import MinariStorage, is_image_space
 
+
+from minari.dataset._storages.hdf5_storage import (
+    HDF5Storage,
+    _decode_info,
+    flatten_dict,
+    unflatten_dict,
+    _get_from_h5py,
+    _add_episode_to_group,
+)
 
 try:
     import h5py
@@ -24,8 +35,8 @@ except ImportError:
 _MAIN_FILE_NAME = "main_data.hdf5"
 
 
-class HDF5Storage(MinariStorage):
-    FORMAT = "hdf5"
+class MyHDF5Storage(MinariStorage):
+    FORMAT = "my_hdf5"
 
     def __init__(
         self,
@@ -38,6 +49,13 @@ class HDF5Storage(MinariStorage):
         if not file_path.exists():
             raise ValueError(f"No data found in data path {self.data_path}")
         self._file_path = file_path
+
+        self.masks_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(observation_space.shape[0], observation_space.shape[1]),
+            dtype=np.uint8,
+        )
 
     @classmethod
     def _create(
@@ -137,11 +155,15 @@ class HDF5Storage(MinariStorage):
                     assert isinstance(info_group, h5py.Group)
                     infos = _decode_info(info_group)
 
+                observations = self._decode_space(
+                    ep_group["observations"], self.observation_space
+                )
+                masks = np.stack(ep_group["masks"], axis=0)
                 ep_dict = {
                     "id": ep_idx,
-                    "observations": self._decode_space(
-                        ep_group["observations"], self.observation_space
-                    ),
+                    "observations": observations,
+                    # "masks": self._decode_space(ep_group["masks"], self.masks_space),
+                    "masks": masks,
                     "actions": self._decode_space(
                         ep_group["actions"], self.action_space
                     ),
@@ -154,7 +176,7 @@ class HDF5Storage(MinariStorage):
 
                 yield ep_dict
 
-    def update_episodes(self, episodes: Iterable[EpisodeBuffer]):
+    def update_episodes(self, episodes: Iterable[MyEpisodeBuffer]):
         additional_steps = 0
         with h5py.File(self._file_path, "a", track_order=True) as file:
             for eps_buff in episodes:
@@ -179,6 +201,7 @@ class HDF5Storage(MinariStorage):
 
                 dict_buffer = {
                     "observations": eps_buff.observations,
+                    # "masks": eps_buff.masks,
                     "actions": eps_buff.actions,
                     "rewards": eps_buff.rewards,
                     "terminations": eps_buff.terminations,
@@ -186,6 +209,10 @@ class HDF5Storage(MinariStorage):
                     "infos": eps_buff.infos,
                 }
                 _add_episode_to_group(dict_buffer, episode_group)
+
+                episode_group.create_dataset(
+                    "masks", data=eps_buff.masks, dtype=np.uint8, chunks=True
+                )
 
             total_episodes = len(file.keys())
 
@@ -197,115 +224,3 @@ class HDF5Storage(MinariStorage):
                 "dataset_size": self.get_size(),
             }
         )
-
-
-def _get_from_h5py(group: h5py.Group, name: str) -> h5py.Group:
-    if name in group:
-        subgroup = group.get(name)
-        assert isinstance(subgroup, h5py.Group)
-    else:
-        subgroup = group.create_group(name)
-
-    return subgroup
-
-
-def _add_episode_to_group(episode_buffer: Dict, episode_group: h5py.Group):
-    # TODO: simplify
-    for key, data in episode_buffer.items():
-        if isinstance(data, dict):
-            episode_group_to_clear = _get_from_h5py(episode_group, key)
-            _add_episode_to_group(data, episode_group_to_clear)
-        elif isinstance(data, tuple):
-            dict_data = {f"_index_{i}": subdata for i, subdata in enumerate(data)}
-            episode_group_to_clear = _get_from_h5py(episode_group, key)
-            _add_episode_to_group(dict_data, episode_group_to_clear)
-        elif isinstance(data, List) and all(
-            isinstance(entry, OrderedDict) for entry in data
-        ):  # list of OrderedDict
-            dict_data = {key: [entry[key] for entry in data] for key in data[0].keys()}
-            episode_group_to_clear = _get_from_h5py(episode_group, key)
-            _add_episode_to_group(dict_data, episode_group_to_clear)
-        # leaf data
-        elif (isinstance(data, list) and all(_is_image(entry) for entry in data)) or (
-            isinstance(data, np.ndarray) and _is_image(data)
-        ):
-            data = [encode_frame(f) for f in data]
-            dt = None
-            if any(f.shape != data[0].shape for f in data):
-                dt = h5py.vlen_dtype(np.uint8)
-            episode_group.create_dataset(
-                key, data=data, dtype=dt, chunks=True
-            )  # Images are stored as a list
-        elif key in episode_group:
-            dataset = episode_group[key]
-            assert isinstance(dataset, h5py.Dataset)
-            dataset.resize((dataset.shape[0] + len(data), *dataset.shape[1:]))
-            dataset[-len(data) :] = data
-        elif not isinstance(data, Iterable):
-            if data is not None:
-                episode_group.create_dataset(key, data=data)
-        else:
-            dtype = None
-            if all(map(lambda elem: isinstance(elem, str), data)):
-                dtype = h5py.string_dtype(encoding="utf-8")
-            dshape = ()
-            if hasattr(data[0], "shape"):
-                dshape = data[0].shape
-
-            episode_group.create_dataset(
-                key, data=data, dtype=dtype, chunks=True, maxshape=(None, *dshape)
-            )
-
-
-def _is_image(data) -> bool:
-    if not (isinstance(data, np.ndarray) and data.dtype == np.uint8):
-        return False
-    if len(data.shape) in {2, 3}:
-        return True
-    if len(data.shape) == 4:
-        return data.shape[-1] in {1, 3}
-    return False
-
-
-def encode_frame(frame: np.ndarray) -> np.ndarray:
-    buffer = io.BytesIO()
-    Image.fromarray(frame).save(buffer, format="JPEG")
-    return np.frombuffer(buffer.getvalue(), dtype=np.uint8).flatten()
-
-
-def _decode_info(info_group: h5py.Group) -> Dict:
-    result = {}
-    for key, value in info_group.items():
-        if isinstance(value, h5py.Group):
-            result[key] = _decode_info(value)
-        elif isinstance(value, h5py.Dataset):
-            result[key] = value[()]
-        else:
-            raise ValueError(
-                "Infos are in an unsupported format; see Minari documentation for supported formats."
-            )
-    return result
-
-
-def flatten_dict(d: Dict, parent_key: str) -> Dict:
-    flatten_d = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}/{k}"
-        if isinstance(v, dict):
-            flatten_d.update(flatten_dict(v, new_key))
-        else:
-            flatten_d[new_key] = v
-    return flatten_d
-
-
-def unflatten_dict(d: Dict) -> Dict:
-    result = {}
-    for k, v in d.items():
-        keys = k.split("/")
-        current = result
-        for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-        current[keys[-1]] = v
-    return result

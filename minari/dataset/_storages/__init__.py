@@ -21,10 +21,17 @@ def get_parquet_storage() -> Type[MinariStorage]:
     return ParquetStorage
 
 
+def get_my_hdf5_storage() -> Type[MinariStorage]:
+    from .my_hdf5_storage import MyHDF5Storage
+
+    return MyHDF5Storage
+
+
 _registry: Dict[str, Callable[[], Type[MinariStorage]]] = {
     "arrow": get_arrow_storage,
     "hdf5": get_hdf5_storage,
     "parquet": get_parquet_storage,
+    "my_hdf5": get_my_hdf5_storage,
 }
 
 

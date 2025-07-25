@@ -17,6 +17,8 @@ from packaging.version import Version
 
 from minari.data_collector.episode_buffer import EpisodeBuffer
 from minari.dataset.episode_data import EpisodeData
+from minari.dataset.my_episode_data import MyEpisodeData
+
 from minari.dataset.minari_storage import MinariStorage, PathLike
 
 
@@ -262,7 +264,9 @@ class MinariDataset:
         return list(map(lambda data: EpisodeData(**data), episodes))
 
     def iterate_episodes(
-        self, episode_indices: Iterable[int] | None = None
+        self,
+        episode_indices: Iterable[int] | None = None,
+        episode_data_cls: type[EpisodeData] = EpisodeData,
     ) -> Iterator[EpisodeData]:
         """Iterate over episodes from the dataset.
 
@@ -276,7 +280,7 @@ class MinariDataset:
 
         assert episode_indices is not None
         episodes_data = self.storage.get_episodes(episode_indices)
-        return map(lambda data: EpisodeData(**data), episodes_data)
+        return map(lambda data: episode_data_cls(**data), episodes_data)
 
     def update_dataset_from_buffer(self, buffer: List[EpisodeBuffer]):
         """Additional data can be added to the Minari Dataset from a list of episode dictionary buffers.

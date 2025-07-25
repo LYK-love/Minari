@@ -1,8 +1,14 @@
-from minari.data_collector import DataCollector
+from minari.data_collector import DataCollector, MyDataCollector
+
 from minari.data_collector.callbacks import EpisodeMetadataCallback, StepDataCallback
 from minari.dataset.episode_data import EpisodeData
+from minari.dataset.my_episode_data import MyEpisodeData
+
 from minari.dataset.minari_dataset import MinariDataset
+
 from minari.dataset.step_data import StepData
+from minari.dataset.my_step_data import MyStepData
+
 from minari.storage.hosting import (
     download_dataset,
     list_remote_datasets,

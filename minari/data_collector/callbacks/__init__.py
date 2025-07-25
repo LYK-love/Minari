@@ -1,2 +1,3 @@
 from minari.data_collector.callbacks.episode_metadata import EpisodeMetadataCallback
 from minari.data_collector.callbacks.step_callback import StepDataCallback
+from minari.data_collector.callbacks.episode_callback import EpisodeDataCallback
