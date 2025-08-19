@@ -108,6 +108,8 @@ class MinariDataset:
         self,
         data: MinariStorage | PathLike,
         episode_indices: npt.NDArray[np.int_] | None = None,
+        episode_data_cls: type[EpisodeData] = EpisodeData,
+        target_image_size: int | None = None,
     ):
         """Initialize properties of the Minari Dataset.
 
@@ -176,6 +178,10 @@ class MinariDataset:
         assert isinstance(self._action_space, gym.spaces.Space)
 
         self._generator = np.random.default_rng()
+
+        self._episode_data_cls = episode_data_cls
+
+        self.target_image_size = target_image_size
 
     def recover_environment(self, eval_env: bool = False, **kwargs) -> gym.Env:
         """Recover the Gymnasium environment used to create the dataset.
@@ -264,9 +270,7 @@ class MinariDataset:
         return list(map(lambda data: EpisodeData(**data), episodes))
 
     def iterate_episodes(
-        self,
-        episode_indices: Iterable[int] | None = None,
-        episode_data_cls: type[EpisodeData] = EpisodeData,
+        self, episode_indices: Iterable[int] | None = None
     ) -> Iterator[EpisodeData]:
         """Iterate over episodes from the dataset.
 
@@ -280,7 +284,7 @@ class MinariDataset:
 
         assert episode_indices is not None
         episodes_data = self.storage.get_episodes(episode_indices)
-        return map(lambda data: episode_data_cls(**data), episodes_data)
+        return map(lambda data: self._episode_data_cls(**data), episodes_data)
 
     def update_dataset_from_buffer(self, buffer: List[EpisodeBuffer]):
         """Additional data can be added to the Minari Dataset from a list of episode dictionary buffers.
@@ -294,12 +298,73 @@ class MinariDataset:
             self.episode_indices, first_id + np.arange(len(buffer))
         )
 
+    def _resize_observations(
+        self, obs: np.ndarray, size: tuple[int, int]
+    ) -> np.ndarray:
+        import cv2
+
+        return np.stack(
+            [cv2.resize(frame, size, interpolation=cv2.INTER_AREA) for frame in obs]
+        )
+
+    def _resize_masks(self, masks: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+        """
+        Resize masks using OpenCV, preserving NumPy format.
+        Args:
+            masks (np.ndarray): THW uint8 masks to resize.
+            size (tuple[int, int]): Target size (width, height) for resizing.
+        """
+        import cv2
+
+        return np.stack(
+            [cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST) for mask in masks]
+        )
+
+    def _process_episode(
+        self, episode: EpisodeData | MyEpisodeData
+    ) -> EpisodeData | MyEpisodeData:
+        """Resize observations and masks (if present) using OpenCV, preserving NumPy format."""
+        target_size = (
+            self.target_image_size,
+            self.target_image_size,
+        )  # (width, height)
+
+        # Resize observations (T, H, W, C) → (T, H_new, W_new, C)
+        episode.observations = self._resize_observations(
+            episode.observations, target_size
+        )
+
+        # Resize masks if they exist (T, H, W) → (T, H_new, W_new)
+        if hasattr(episode, "masks") and episode.masks is not None:
+            episode.masks = self._resize_masks(episode.masks, target_size)
+
+        return episode
+
+    def set_processing(
+        self, process_episode: bool = True, target_image_size: int | None = None
+    ):
+        """
+        @Deprecated
+        Enable processing of episodes when iterating over the dataset.
+
+        Args:
+            process_episode (bool): If True, the episodes will be processed using the `_process_episode` method.
+        """
+        self.target_image_size = target_image_size
+
+        if self.target_image_size is None or not process_episode:
+            self._process_episode = lambda x: x
+        else:
+            self._process_episode = self._process_episode
+
     def __iter__(self):
         return self.iterate_episodes()
 
     def __getitem__(self, idx: int) -> EpisodeData:
         episode = self.iterate_episodes([self.episode_indices[idx]])
-        return next(episode)
+        episode_data: EpisodeData | MyEpisodeData = next(episode)
+        # episode_data = self._process_episode(episode_data)
+        return episode_data
 
     def __len__(self) -> int:
         return self.total_episodes

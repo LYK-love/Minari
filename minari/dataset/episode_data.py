@@ -4,7 +4,7 @@ from typing import Any
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class EpisodeData:
     """Contains the datasets data for a single episode."""
 

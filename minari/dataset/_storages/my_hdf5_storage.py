@@ -128,7 +128,7 @@ class MyHDF5Storage(MinariStorage):
             result = map(lambda string: string.decode("utf-8"), hdf_ref[()])
             return list(result)
         elif is_image_space(space):
-            jpeg_bytes_list = hdf_ref[()]
+            jpeg_bytes_list = hdf_ref[()]  # Read the JPEG bytes in one I/O operation
             first_image = np.array(
                 Image.open(io.BytesIO(jpeg_bytes_list[0])), dtype=np.uint8
             )
@@ -145,6 +145,10 @@ class MyHDF5Storage(MinariStorage):
             return hdf_ref[()]
 
     def get_episodes(self, episode_indices: Iterable[int]) -> Iterable[dict]:
+        """
+        This function typically takes around 0.7 seconds to decode observations for one episode (or sequence) with length ~= 1000.
+        """
+
         with h5py.File(self._file_path, "r") as file:
             for ep_idx in episode_indices:
                 ep_group = file[f"episode_{ep_idx}"]
@@ -155,14 +159,22 @@ class MyHDF5Storage(MinariStorage):
                     assert isinstance(info_group, h5py.Group)
                     infos = _decode_info(info_group)
 
+                import time
+
+                # start = time.time()
                 observations = self._decode_space(
                     ep_group["observations"], self.observation_space
                 )
-                masks = np.stack(ep_group["masks"], axis=0)
+                # elapsed = time.time() - start
+                # print(f"Time to decode observations: {elapsed:.6f} seconds")
+
+                masks = ep_group["masks"][
+                    ()
+                ]  # This is very important as it reads all masks bytes at one I/O operation
+
                 ep_dict = {
                     "id": ep_idx,
                     "observations": observations,
-                    # "masks": self._decode_space(ep_group["masks"], self.masks_space),
                     "masks": masks,
                     "actions": self._decode_space(
                         ep_group["actions"], self.action_space

@@ -14,6 +14,8 @@ from minari.dataset.minari_storage import MinariStorage
 from minari.storage import hosting
 from minari.storage.datasets_root_dir import get_dataset_path
 
+from minari.dataset.episode_data import EpisodeData
+from minari.dataset.my_episode_data import MyEpisodeData
 
 # Use importlib due to circular import when: "from minari import __version__"
 __version__ = importlib.metadata.version("minari")
@@ -33,7 +35,11 @@ def dataset_id_sort_key(dataset_id: str) -> Tuple[str, str, int]:
     return (namespace, dataset_name, version)
 
 
-def load_dataset(dataset_id: str, download: bool = False):
+def load_dataset(
+    dataset_id: str,
+    download: bool = False,
+    episode_data_cls: Union[type[EpisodeData], type[MyEpisodeData]] = EpisodeData,
+):
     """Retrieve Minari dataset from local database.
 
     Args:
@@ -54,7 +60,7 @@ def load_dataset(dataset_id: str, download: bool = False):
 
         hosting.download_dataset(dataset_id)
 
-    return MinariDataset(data_path)
+    return MinariDataset(data_path, episode_data_cls=episode_data_cls)
 
 
 def list_local_datasets(
